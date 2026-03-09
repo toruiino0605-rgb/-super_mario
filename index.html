@@ -1,0 +1,1517 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Super Mario Bros - World 1-1 Tribute</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-family: 'Courier New', monospace;
+    overflow: hidden;
+  }
+  #gameCanvas {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    border: 2px solid #333;
+    cursor: none;
+  }
+  #controls {
+    color: #999;
+    font-size: 12px;
+    margin-top: 10px;
+    text-align: center;
+    line-height: 1.6;
+  }
+  #controls span { color: #fc9838; }
+  #mobile-controls {
+    display: none;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 140px;
+    z-index: 100;
+    pointer-events: none;
+  }
+  .mobile-btn {
+    position: absolute;
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.15);
+    border: 2px solid rgba(255,255,255,0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255,255,255,0.6);
+    font-size: 24px;
+    font-weight: bold;
+    pointer-events: auto;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+  }
+  .mobile-btn:active, .mobile-btn.active {
+    background: rgba(255,255,255,0.3);
+    border-color: rgba(255,255,255,0.6);
+  }
+  #btn-left { left: 20px; bottom: 40px; }
+  #btn-right { left: 100px; bottom: 40px; }
+  #btn-a { right: 20px; bottom: 60px; font-size: 18px; }
+  #btn-b { right: 100px; bottom: 40px; font-size: 18px; }
+  @media (max-width: 768px) {
+    #mobile-controls { display: block; }
+    #controls { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="gameCanvas"></canvas>
+<div id="controls">
+  <span>←→</span> Move &nbsp; <span>Space / ↑</span> Jump &nbsp; <span>Shift</span> Run &nbsp; <span>Enter</span> Start
+</div>
+
+<div id="mobile-controls">
+  <div class="mobile-btn" id="btn-left">◀</div>
+  <div class="mobile-btn" id="btn-right">▶</div>
+  <div class="mobile-btn" id="btn-b">B</div>
+  <div class="mobile-btn" id="btn-a">A</div>
+</div>
+
+<script>
+// ============================================================
+// Super Mario Bros World 1-1 Tribute
+// Single-file, no build, no dependencies
+// ============================================================
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// --- Constants ---
+const TILE = 16;
+const SCALE = 3;
+const VIEW_W = 256;
+const VIEW_H = 240;
+// NES-accurate physics:
+// Original SMB: gravity ~0.375 px/frame, jump init vel ~-7.5 (small) / ~-8.0 (big w/ run)
+// Max jump height: ~4.5 tiles (small), ~5 tiles (big+run)
+const GRAVITY = 0.35;
+const MAX_FALL = 7;
+
+canvas.width = VIEW_W * SCALE;
+canvas.height = VIEW_H * SCALE;
+ctx.imageSmoothingEnabled = false;
+
+// --- Color Palette (NES-like) ---
+const COLORS = {
+  sky: '#5c94fc',
+  ground1: '#c84c0c',
+  ground2: '#e09050',
+  brick: '#c84c0c',
+  brickLight: '#dc8434',
+  question: '#fc9838',
+  questionDark: '#c84c0c',
+  pipe: '#00a800',
+  pipeDark: '#005800',
+  pipeHighlight: '#80d010',
+  mario: '#b53120',
+  marioSkin: '#fca044',
+  marioBrown: '#6b420c',
+  goomba: '#c84c0c',
+  goombaDark: '#6b420c',
+  white: '#fcfcfc',
+  black: '#000',
+  coin: '#fc9838',
+  flag: '#00a800',
+  flagPole: '#aaa',
+  castle: '#888',
+  castleDark: '#555',
+  cloud: '#fcfcfc',
+  cloudShadow: '#acbcfc',
+  bushGreen: '#00a800',
+  bushLight: '#80d010',
+  hillGreen: '#00a800',
+  hillLight: '#80d010',
+  text: '#fcfcfc',
+};
+
+// --- Pixel Art Drawing ---
+function drawPixelBlock(offX, offY, data, palette, scale=1) {
+  for (let y = 0; y < data.length; y++) {
+    for (let x = 0; x < data[y].length; x++) {
+      const c = data[y][x];
+      if (c !== 0 && palette[c]) {
+        ctx.fillStyle = palette[c];
+        ctx.fillRect(offX + x * scale, offY + y * scale, scale, scale);
+      }
+    }
+  }
+}
+
+// --- Sprite Data ---
+const MARIO_STAND = [
+  [0,0,0,0,1,1,1,1,1,0,0,0],
+  [0,0,0,1,1,1,1,1,1,1,1,0],
+  [0,0,0,3,3,3,2,2,0,2,0,0],
+  [0,0,3,2,3,2,2,2,0,2,2,2],
+  [0,0,3,2,3,3,2,2,2,0,2,2],
+  [0,0,0,3,3,2,2,2,0,0,0,0],
+  [0,0,0,0,1,1,4,1,1,0,0,0],
+  [0,0,0,1,1,4,1,4,1,1,0,0],
+  [0,0,1,1,1,4,4,4,1,1,1,0],
+  [0,0,2,2,1,4,1,4,1,2,2,0],
+  [0,0,2,2,2,4,4,4,2,2,2,0],
+  [0,0,2,2,4,4,4,4,4,2,2,0],
+  [0,0,0,0,4,4,0,4,4,0,0,0],
+  [0,0,0,3,3,3,0,3,3,0,0,0],
+  [0,0,3,3,3,3,0,3,3,3,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0],
+];
+const MARIO_WALK1 = [
+  [0,0,0,0,1,1,1,1,1,0,0,0],
+  [0,0,0,1,1,1,1,1,1,1,1,0],
+  [0,0,0,3,3,3,2,2,0,2,0,0],
+  [0,0,3,2,3,2,2,2,0,2,2,2],
+  [0,0,3,2,3,3,2,2,2,0,2,2],
+  [0,0,0,3,3,2,2,2,0,0,0,0],
+  [0,0,0,0,1,1,4,1,0,0,0,0],
+  [0,0,0,1,1,1,4,4,1,0,0,0],
+  [0,0,0,0,1,1,4,4,1,0,0,0],
+  [0,0,0,0,1,4,4,4,0,0,0,0],
+  [0,0,0,0,4,4,4,0,0,0,0,0],
+  [0,0,0,0,4,4,0,0,0,0,0,0],
+  [0,0,0,3,3,0,0,0,0,0,0,0],
+  [0,0,0,3,3,3,0,0,0,0,0,0],
+  [0,0,0,0,3,3,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0],
+];
+const MARIO_WALK2 = [
+  [0,0,0,0,1,1,1,1,1,0,0,0],
+  [0,0,0,1,1,1,1,1,1,1,1,0],
+  [0,0,0,3,3,3,2,2,0,2,0,0],
+  [0,0,3,2,3,2,2,2,0,2,2,2],
+  [0,0,3,2,3,3,2,2,2,0,2,2],
+  [0,0,0,3,3,2,2,2,0,0,0,0],
+  [0,0,0,1,1,4,1,1,0,0,0,0],
+  [0,0,1,1,4,4,1,0,0,0,0,0],
+  [0,0,0,4,4,4,3,3,0,0,0,0],
+  [0,0,4,4,4,3,3,0,0,0,0,0],
+  [0,0,4,4,3,3,0,0,0,0,0,0],
+  [0,0,0,3,3,0,0,0,0,0,0,0],
+  [0,0,0,3,3,3,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0],
+];
+const MARIO_JUMP = [
+  [0,0,0,0,0,1,1,1,1,1,0,0],
+  [0,0,0,0,1,1,1,1,1,1,1,0],
+  [0,0,0,0,3,3,3,2,2,0,2,0],
+  [0,0,0,3,2,3,2,2,2,0,2,2],
+  [0,0,0,3,2,3,3,2,2,2,2,2],
+  [0,0,0,0,3,3,2,2,2,0,0,0],
+  [0,0,0,1,1,4,1,1,1,0,0,0],
+  [0,3,3,1,1,4,4,1,1,3,0,0],
+  [0,3,3,0,4,4,4,4,0,0,0,0],
+  [0,0,0,4,4,4,4,0,0,0,0,0],
+  [0,0,0,4,4,0,4,4,0,0,0,0],
+  [0,0,4,4,0,0,0,4,4,0,0,0],
+  [0,0,3,3,0,0,0,0,3,3,0,0],
+  [0,3,3,3,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0],
+];
+const MARIO_PALETTE = { 1: COLORS.mario, 2: COLORS.marioSkin, 3: COLORS.marioBrown, 4: COLORS.mario };
+
+// Big Mario sprites (16 cols x 16 rows, rendered at 2x height = 32px)
+const MARIO_BIG_STAND = [
+  [0,0,0,0,0,1,1,1,1,1,0,0,0,0,0,0],
+  [0,0,0,0,1,1,1,1,1,1,1,1,1,0,0,0],
+  [0,0,0,0,3,3,3,2,2,0,2,0,0,0,0,0],
+  [0,0,0,3,2,3,2,2,2,0,2,2,2,0,0,0],
+  [0,0,0,3,2,3,3,2,2,2,0,2,2,0,0,0],
+  [0,0,0,0,3,3,2,2,2,2,0,0,0,0,0,0],
+  [0,0,0,0,0,1,1,1,4,1,1,0,0,0,0,0],
+  [0,0,0,0,1,1,4,1,4,1,1,1,0,0,0,0],
+  [0,0,0,1,1,1,4,4,4,1,1,1,0,0,0,0],
+  [0,0,0,2,1,4,2,4,2,4,1,2,0,0,0,0],
+  [0,0,0,2,2,4,4,4,4,4,2,2,0,0,0,0],
+  [0,0,0,2,2,4,4,4,4,4,2,2,0,0,0,0],
+  [0,0,0,0,0,4,4,0,4,4,0,0,0,0,0,0],
+  [0,0,0,0,4,4,4,0,4,4,4,0,0,0,0,0],
+  [0,0,0,3,3,3,3,0,3,3,3,3,0,0,0,0],
+  [0,0,3,3,3,3,3,0,3,3,3,3,3,0,0,0],
+];
+const MARIO_BIG_WALK1 = [
+  [0,0,0,0,0,1,1,1,1,1,0,0,0,0,0,0],
+  [0,0,0,0,1,1,1,1,1,1,1,1,1,0,0,0],
+  [0,0,0,0,3,3,3,2,2,0,2,0,0,0,0,0],
+  [0,0,0,3,2,3,2,2,2,0,2,2,2,0,0,0],
+  [0,0,0,3,2,3,3,2,2,2,0,2,2,0,0,0],
+  [0,0,0,0,3,3,2,2,2,2,0,0,0,0,0,0],
+  [0,0,0,0,1,1,4,1,1,1,0,0,0,0,0,0],
+  [0,0,0,1,1,4,4,1,1,0,0,0,0,0,0,0],
+  [0,0,0,1,4,4,4,1,1,0,0,0,0,0,0,0],
+  [0,0,0,4,4,4,1,1,0,0,0,0,0,0,0,0],
+  [0,0,0,0,4,4,4,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,4,4,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,3,3,3,0,0,0,0,0,0,0,0,0],
+  [0,0,0,3,3,3,3,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,3,3,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+];
+const MARIO_BIG_JUMP = [
+  [0,0,0,0,0,1,1,1,1,1,0,0,0,0,0,0],
+  [0,0,0,0,1,1,1,1,1,1,1,1,1,0,0,0],
+  [0,0,0,0,3,3,3,2,2,0,2,0,0,0,0,0],
+  [0,0,0,3,2,3,2,2,2,0,2,2,2,0,0,0],
+  [0,0,0,3,2,3,3,2,2,2,0,2,2,0,0,0],
+  [0,0,0,0,3,3,2,2,2,2,0,0,0,0,0,0],
+  [0,0,0,0,1,1,4,1,1,1,1,0,0,0,0,0],
+  [0,0,3,3,1,4,4,4,1,1,3,3,0,0,0,0],
+  [0,3,3,3,4,4,4,4,1,3,3,0,0,0,0,0],
+  [0,0,0,4,4,4,4,4,0,0,0,0,0,0,0,0],
+  [0,0,0,4,4,0,0,4,4,0,0,0,0,0,0,0],
+  [0,0,4,4,0,0,0,0,4,4,0,0,0,0,0,0],
+  [0,3,3,3,0,0,0,0,0,3,3,0,0,0,0,0],
+  [0,3,3,3,0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+];
+
+const MARIO_DEAD = [
+  [0,0,0,0,1,1,1,1,1,0,0,0],
+  [0,0,0,1,1,1,1,1,1,1,1,0],
+  [0,0,0,3,3,3,2,2,0,2,0,0],
+  [0,0,3,2,3,2,2,2,0,2,2,2],
+  [0,0,3,2,3,3,2,2,2,0,2,2],
+  [0,0,0,3,3,2,2,2,0,0,0,0],
+  [0,0,0,1,1,4,1,1,1,0,0,0],
+  [3,3,1,1,1,4,4,1,1,1,3,3],
+  [3,3,0,4,4,4,4,4,0,0,3,3],
+  [0,0,4,4,4,4,4,4,4,0,0,0],
+  [0,0,4,4,0,0,0,4,4,0,0,0],
+  [0,0,3,3,0,0,0,3,3,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0],
+];
+
+const GOOMBA_SPRITE = [
+  [0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0],
+  [0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,0],
+  [0,0,0,0,1,1,1,1,1,1,1,1,0,0,0,0],
+  [0,0,0,1,1,1,1,1,1,1,1,1,1,0,0,0],
+  [0,0,1,1,3,3,1,1,1,3,3,1,1,0,0,0],
+  [0,1,1,3,3,0,3,1,3,0,3,3,1,1,0,0],
+  [0,1,1,3,0,0,3,1,3,0,0,3,1,1,0,0],
+  [1,1,1,1,3,3,1,1,1,3,3,1,1,1,1,0],
+  [1,1,1,1,1,1,1,0,1,1,1,1,1,1,1,0],
+  [1,1,1,1,1,1,0,0,0,1,1,1,1,1,1,0],
+  [0,0,0,0,1,1,1,1,1,1,1,0,0,0,0,0],
+  [0,0,0,1,1,1,1,1,1,1,1,1,0,0,0,0],
+  [0,0,2,2,2,1,1,1,1,1,2,2,2,0,0,0],
+  [0,2,2,2,2,2,0,0,0,2,2,2,2,2,0,0],
+  [0,2,2,2,2,2,0,0,0,2,2,2,2,2,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+];
+const GOOMBA_WALK2 = [
+  [0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0],
+  [0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,0],
+  [0,0,0,0,1,1,1,1,1,1,1,1,0,0,0,0],
+  [0,0,0,1,1,1,1,1,1,1,1,1,1,0,0,0],
+  [0,0,1,1,3,3,1,1,1,3,3,1,1,0,0,0],
+  [0,1,1,3,3,0,3,1,3,0,3,3,1,1,0,0],
+  [0,1,1,3,0,0,3,1,3,0,0,3,1,1,0,0],
+  [1,1,1,1,3,3,1,1,1,3,3,1,1,1,1,0],
+  [1,1,1,1,1,1,1,0,1,1,1,1,1,1,1,0],
+  [1,1,1,1,1,1,0,0,0,1,1,1,1,1,1,0],
+  [0,0,0,0,1,1,1,1,1,1,1,0,0,0,0,0],
+  [0,0,0,1,1,1,1,1,1,1,1,1,0,0,0,0],
+  [0,0,2,2,2,1,1,1,1,1,2,2,2,0,0,0],
+  [0,0,2,2,2,2,0,0,0,2,2,2,2,0,0,0],
+  [0,2,2,2,2,0,0,0,0,0,2,2,2,2,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+];
+const GOOMBA_FLAT = [
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,1,1,3,3,0,3,1,3,0,3,3,1,1,0,0],
+  [1,1,1,1,3,3,1,1,1,3,3,1,1,1,1,0],
+  [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+];
+const GOOMBA_PALETTE = { 1: COLORS.goomba, 2: COLORS.goombaDark, 3: '#000' };
+
+const KOOPA_SPRITE1 = [
+  [0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0],
+  [0,0,0,0,0,1,1,1,1,1,0,0,0,0,0,0],
+  [0,0,0,0,1,1,3,1,3,1,0,0,0,0,0,0],
+  [0,0,0,0,1,1,3,1,3,1,0,0,0,0,0,0],
+  [0,0,0,0,1,1,1,1,1,1,0,0,0,0,0,0],
+  [0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0],
+  [0,0,0,0,2,2,2,2,2,0,0,0,0,0,0,0],
+  [0,0,0,2,2,1,2,1,2,2,0,0,0,0,0,0],
+  [0,0,0,2,1,1,1,1,1,2,0,0,0,0,0,0],
+  [0,0,2,2,1,1,1,1,1,2,2,0,0,0,0,0],
+  [0,0,2,2,1,1,1,1,1,2,2,0,0,0,0,0],
+  [0,0,2,2,1,1,1,1,1,2,2,0,0,0,0,0],
+  [0,0,0,2,2,2,2,2,2,2,0,0,0,0,0,0],
+  [0,0,0,0,3,3,0,3,3,0,0,0,0,0,0,0],
+  [0,0,0,3,3,3,0,3,3,3,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+];
+const KOOPA_SHELL = [
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,2,2,2,2,2,2,0,0,0,0,0,0],
+  [0,0,0,2,2,1,1,1,1,2,2,0,0,0,0,0],
+  [0,0,2,2,1,1,1,1,1,1,2,2,0,0,0,0],
+  [0,0,2,1,1,1,1,1,1,1,1,2,0,0,0,0],
+  [0,0,2,2,1,1,1,1,1,1,2,2,0,0,0,0],
+  [0,0,0,2,2,2,2,2,2,2,2,0,0,0,0,0],
+  [0,0,0,0,2,2,2,2,2,2,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+];
+const KOOPA_PALETTE = { 1: '#80d010', 2: COLORS.pipe, 3: COLORS.goombaDark };
+
+const MUSHROOM_SPRITE = [
+  [0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,0],
+  [0,0,0,1,1,1,1,1,1,1,1,1,1,0,0,0],
+  [0,0,1,1,2,2,1,1,1,2,2,1,1,0,0,0],
+  [0,1,1,2,2,2,2,1,2,2,2,2,1,1,0,0],
+  [0,1,2,2,2,2,2,1,2,2,2,2,2,1,0,0],
+  [1,1,2,2,2,2,2,1,2,2,2,2,2,1,1,0],
+  [1,1,2,2,2,2,1,1,1,2,2,2,2,1,1,0],
+  [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0],
+  [0,0,0,0,3,3,3,3,3,3,3,0,0,0,0,0],
+  [0,0,0,3,3,3,3,3,3,3,3,3,0,0,0,0],
+  [0,0,3,3,3,0,3,3,3,0,3,3,3,0,0,0],
+  [0,0,3,3,0,0,0,3,0,0,0,3,3,0,0,0],
+  [0,0,3,3,0,0,0,3,0,0,0,3,3,0,0,0],
+  [0,0,0,3,3,0,3,3,3,0,3,3,0,0,0,0],
+  [0,0,0,0,3,3,3,3,3,3,3,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+];
+const MUSHROOM_PALETTE = { 1: COLORS.mario, 2: '#fcfcfc', 3: COLORS.marioSkin };
+
+const COIN_SPRITE = [
+  [0,0,0,1,1,0,0,0],
+  [0,0,1,2,2,1,0,0],
+  [0,1,2,1,1,2,1,0],
+  [0,1,2,1,1,2,1,0],
+  [0,1,2,1,1,2,1,0],
+  [0,1,2,1,1,2,1,0],
+  [0,0,1,2,2,1,0,0],
+  [0,0,0,1,1,0,0,0],
+];
+const COIN_PALETTE = { 1: '#e09050', 2: COLORS.coin };
+
+// --- Sound system ---
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+let audioCtx = null;
+function ensureAudio() {
+  if (!audioCtx) { try { audioCtx = new AudioCtx(); } catch(e) {} }
+}
+function playSound(freq, duration, type='square', volume=0.1) {
+  ensureAudio();
+  if (!audioCtx) return;
+  try {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    gain.gain.value = volume;
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + duration);
+  } catch(e) {}
+}
+function sfxJump() { playSound(400, 0.1); setTimeout(()=>playSound(600, 0.1), 50); }
+function sfxCoin() { playSound(988, 0.05); setTimeout(()=>playSound(1319, 0.15), 50); }
+function sfxStomp() { playSound(200, 0.1); }
+function sfxBump() { playSound(150, 0.08); }
+function sfxPowerup() { [523,659,784,1047].forEach((f,i) => setTimeout(()=>playSound(f, 0.12), i*80)); }
+function sfxDie() { playSound(400, 0.15); setTimeout(()=>playSound(300, 0.15), 100); setTimeout(()=>playSound(200, 0.3), 200); }
+function sfxFlagpole() { [523,587,659,698,784,880,988,1047].forEach((f,i) => setTimeout(()=>playSound(f, 0.1), i*60)); }
+function sfxBreak() { playSound(300, 0.05); setTimeout(()=>playSound(200, 0.05), 30); }
+function sfx1up() { [262,330,392,523,659,784].forEach((f,i) => setTimeout(()=>playSound(f, 0.08), i*60)); }
+function sfxKick() { playSound(500, 0.05); setTimeout(()=>playSound(300, 0.08), 30); }
+
+// --- BGM System ---
+// Original chiptune composition - upbeat platformer theme
+let bgmPlaying = false;
+let bgmNodes = [];
+let bgmTimer = null;
+let bgmBeat = 0;
+const BPM = 160;
+const BEAT_TIME = 60 / BPM;
+const NOTE = {
+  'C3':131,'D3':147,'E3':165,'F3':175,'G3':196,'A3':220,'Bb3':233,'B3':247,
+  'C4':262,'D4':294,'E4':330,'F4':349,'G4':392,'A4':440,'Bb4':466,'B4':494,
+  'C5':523,'D5':587,'E5':659,'F5':698,'G5':784,'A5':880,'Bb5':932,'B5':988,
+  'C6':1047,'D6':1175,'E6':1319,'R':0,
+};
+
+// Melody: bright, bouncy, original platformer tune
+// [note, duration_in_16ths]
+const bgmMelody = [
+  ['E5',2],['G5',2],['A5',2],['G5',2],['E5',2],['C5',2],['D5',2],['E5',2],
+  ['G5',2],['E5',2],['C5',2],['D5',1],['E5',1],['G5',4],['E5',4],
+  ['A5',2],['G5',2],['E5',2],['G5',2],['A5',2],['B5',2],['A5',2],['G5',2],
+  ['E5',2],['G5',2],['C6',4],['A5',2],['G5',2],['E5',4],['R',4],
+  ['C5',2],['E5',2],['G5',2],['A5',2],['G5',1],['E5',1],['C5',2],['D5',2],['E5',2],['R',2],
+  ['D5',2],['F5',2],['A5',2],['G5',2],['F5',2],['D5',2],['E5',2],['F5',2],
+  ['G5',2],['A5',2],['B5',2],['C6',2],['B5',2],['A5',2],['G5',2],['E5',2],
+  ['C5',2],['E5',2],['G5',4],['C6',4],['G5',2],['E5',2],['C5',4],
+];
+
+const bgmBass = [
+  ['C3',4],['R',4],['C3',4],['R',4],
+  ['C3',4],['R',4],['G3',4],['R',4],
+  ['A3',4],['R',4],['E3',4],['R',4],
+  ['C3',4],['G3',4],['C3',4],['R',4],
+  ['C3',4],['R',4],['C3',4],['R',4],
+  ['D3',4],['R',4],['Bb3',4],['R',4],
+  ['G3',4],['R',4],['A3',4],['R',4],
+  ['C3',4],['G3',4],['C3',6],['R',2],
+];
+
+const bgmArp = [
+  ['C4',1],['E4',1],['G4',1],['E4',1],['C4',1],['E4',1],['G4',1],['E4',1],
+  ['C4',1],['E4',1],['G4',1],['E4',1],['C4',1],['E4',1],['G4',1],['E4',1],
+  ['C4',1],['E4',1],['G4',1],['E4',1],['C4',1],['E4',1],['G4',1],['E4',1],
+  ['G3',1],['B3',1],['D4',1],['B3',1],['G3',1],['B3',1],['D4',1],['B3',1],
+  ['A3',1],['C4',1],['E4',1],['C4',1],['A3',1],['C4',1],['E4',1],['C4',1],
+  ['E3',1],['G3',1],['B3',1],['G3',1],['E3',1],['G3',1],['B3',1],['G3',1],
+  ['C4',1],['E4',1],['G4',1],['E4',1],['G3',1],['B3',1],['D4',1],['B3',1],
+  ['C4',1],['E4',1],['G4',1],['E4',1],['C4',1],['E4',1],['G4',1],['E4',1],
+  ['C4',1],['E4',1],['G4',1],['E4',1],['C4',1],['E4',1],['G4',1],['E4',1],
+  ['C4',1],['E4',1],['G4',1],['E4',1],['C4',1],['E4',1],['G4',1],['E4',1],
+  ['D4',1],['F4',1],['A4',1],['F4',1],['D4',1],['F4',1],['A4',1],['F4',1],
+  ['Bb3',1],['D4',1],['F4',1],['D4',1],['Bb3',1],['D4',1],['F4',1],['D4',1],
+  ['G3',1],['B3',1],['D4',1],['B3',1],['G3',1],['B3',1],['D4',1],['B3',1],
+  ['A3',1],['C4',1],['E4',1],['C4',1],['A3',1],['C4',1],['E4',1],['C4',1],
+  ['C4',1],['E4',1],['G4',1],['E4',1],['G3',1],['B3',1],['D4',1],['B3',1],
+  ['C4',1],['E4',1],['G4',1],['E4',1],['C4',1],['G4',1],['E4',1],['C4',1],
+];
+
+// Drum pattern: K=kick, S=snare, H=hihat
+const bgmDrums = [
+  'K','H','S','H','K','H','S','H','K','H','S','H','K','K','S','H',
+  'K','H','S','H','K','H','S','H','K','H','S','H','K','K','S','H',
+  'K','H','S','H','K','H','S','H','K','H','S','H','K','K','S','H',
+  'K','H','S','H','K','H','S','H','K','H','S','H','K','K','S','S',
+  'K','H','S','H','K','H','S','H','K','H','S','H','K','K','S','H',
+  'K','H','S','H','K','H','S','H','K','H','S','H','K','K','S','H',
+  'K','H','S','H','K','H','S','H','K','H','S','H','K','K','S','H',
+  'K','H','S','H','K','H','S','H','K','K','S','S','K','K','K','K',
+];
+
+function bgmPlayNote(freq, duration, type, volume, startTime) {
+  if (!audioCtx || freq === 0) return;
+  try {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(volume, startTime);
+    gain.gain.setValueAtTime(volume * 0.7, startTime + duration * 0.5);
+    gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration * 0.95);
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    osc.start(startTime); osc.stop(startTime + duration);
+    bgmNodes.push(osc);
+    osc.onended = () => { const i = bgmNodes.indexOf(osc); if (i>=0) bgmNodes.splice(i,1); };
+  } catch(e) {}
+}
+
+function bgmPlayDrum(type, startTime) {
+  if (!audioCtx) return;
+  try {
+    if (type === 'K') {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(150, startTime);
+      osc.frequency.exponentialRampToValueAtTime(40, startTime + 0.08);
+      gain.gain.setValueAtTime(0.12, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.1);
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.start(startTime); osc.stop(startTime + 0.1);
+      bgmNodes.push(osc);
+      osc.onended = () => { const i = bgmNodes.indexOf(osc); if (i>=0) bgmNodes.splice(i,1); };
+    } else if (type === 'S') {
+      const bufSize = audioCtx.sampleRate * 0.06;
+      const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < bufSize; i++) d[i] = Math.random()*2-1;
+      const src = audioCtx.createBufferSource();
+      const gain = audioCtx.createGain();
+      src.buffer = buf;
+      gain.gain.setValueAtTime(0.07, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.06);
+      src.connect(gain); gain.connect(audioCtx.destination);
+      src.start(startTime); src.stop(startTime + 0.06);
+      bgmNodes.push(src);
+      src.onended = () => { const i = bgmNodes.indexOf(src); if (i>=0) bgmNodes.splice(i,1); };
+    } else if (type === 'H') {
+      const bufSize = audioCtx.sampleRate * 0.03;
+      const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < bufSize; i++) d[i] = Math.random()*2-1;
+      const src = audioCtx.createBufferSource();
+      const gain = audioCtx.createGain();
+      const hp = audioCtx.createBiquadFilter();
+      hp.type = 'highpass'; hp.frequency.value = 8000;
+      src.buffer = buf;
+      gain.gain.setValueAtTime(0.03, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.03);
+      src.connect(hp); hp.connect(gain); gain.connect(audioCtx.destination);
+      src.start(startTime); src.stop(startTime + 0.03);
+      bgmNodes.push(src);
+      src.onended = () => { const i = bgmNodes.indexOf(src); if (i>=0) bgmNodes.splice(i,1); };
+    }
+  } catch(e) {}
+}
+
+function getTotalSteps(pattern) {
+  let t = 0; for (const e of pattern) t += e[1]; return t;
+}
+
+function scheduleNextBGMChunk() {
+  if (!bgmPlaying || !audioCtx) return;
+  const now = audioCtx.currentTime;
+  const sxt = BEAT_TIME / 4; // 16th note duration
+  const chunk = 32;
+
+  const totalMel = getTotalSteps(bgmMelody);
+  const totalBass = getTotalSteps(bgmBass);
+  const totalArp = getTotalSteps(bgmArp);
+  const totalDrm = bgmDrums.length;
+
+  for (let s = 0; s < chunk; s++) {
+    const time = now + s * sxt;
+    const step = bgmBeat + s;
+
+    // Drums
+    bgmPlayDrum(bgmDrums[step % totalDrm], time);
+
+    // Arp
+    let aPos = step % totalArp, aAcc = 0;
+    for (let i = 0; i < bgmArp.length; i++) {
+      if (aAcc === aPos) {
+        bgmPlayNote(NOTE[bgmArp[i][0]]||0, bgmArp[i][1]*sxt*0.8, 'triangle', 0.03, time);
+        break;
+      }
+      aAcc += bgmArp[i][1]; if (aAcc > aPos) break;
+    }
+
+    // Melody
+    let mPos = step % totalMel, mAcc = 0;
+    for (let i = 0; i < bgmMelody.length; i++) {
+      if (mAcc === mPos) {
+        bgmPlayNote(NOTE[bgmMelody[i][0]]||0, bgmMelody[i][1]*sxt*0.85, 'square', 0.055, time);
+        break;
+      }
+      mAcc += bgmMelody[i][1]; if (mAcc > mPos) break;
+    }
+
+    // Bass
+    let bPos = step % totalBass, bAcc = 0;
+    for (let i = 0; i < bgmBass.length; i++) {
+      if (bAcc === bPos) {
+        bgmPlayNote(NOTE[bgmBass[i][0]]||0, bgmBass[i][1]*sxt*0.7, 'triangle', 0.055, time);
+        break;
+      }
+      bAcc += bgmBass[i][1]; if (bAcc > bPos) break;
+    }
+  }
+
+  bgmBeat += chunk;
+  bgmTimer = setTimeout(scheduleNextBGMChunk, chunk * sxt * 1000 * 0.75);
+}
+
+function startBGM() {
+  ensureAudio();
+  if (!audioCtx || bgmPlaying) return;
+  bgmPlaying = true;
+  bgmBeat = 0;
+  scheduleNextBGMChunk();
+}
+
+function stopBGM() {
+  bgmPlaying = false;
+  if (bgmTimer) { clearTimeout(bgmTimer); bgmTimer = null; }
+  bgmNodes.forEach(n => { try { n.stop(); } catch(e) {} });
+  bgmNodes = [];
+}
+
+// --- Tile types ---
+const T = {
+  EMPTY: 0, GROUND: 1, BRICK: 2, QUESTION: 3, QUESTION_EMPTY: 4,
+  PIPE_TL: 5, PIPE_TR: 6, PIPE_BL: 7, PIPE_BR: 8,
+  STAIR: 9, FLAG_POLE: 10, FLAG_TOP: 11, CASTLE: 12, BRICK_EMPTY: 13, INVISIBLE: 14,
+};
+
+const LEVEL_W = 224;
+const LEVEL_H = 15;
+
+function createLevel() {
+  const map = [];
+  for (let y = 0; y < LEVEL_H; y++) map[y] = new Array(LEVEL_W).fill(T.EMPTY);
+
+  function setGround(startX, endX) {
+    for (let x = startX; x <= endX; x++) {
+      map[13][x] = T.GROUND;
+      map[14][x] = T.GROUND;
+    }
+  }
+
+  setGround(0, 68);
+  setGround(71, 85);
+  setGround(89, 152);
+  setGround(155, 223);
+
+  // === BLOCKS ===
+  map[9][16] = T.QUESTION;
+  map[9][20] = T.BRICK;
+  map[9][21] = T.QUESTION;
+  map[9][22] = T.BRICK;
+  map[9][23] = T.QUESTION;
+  map[9][24] = T.BRICK;
+  map[5][21] = T.QUESTION;
+
+  // === PIPES ===
+  // Pipe 1: 2 tiles tall (rows 11-12)
+  map[11][28] = T.PIPE_TL; map[11][29] = T.PIPE_TR;
+  map[12][28] = T.PIPE_BL; map[12][29] = T.PIPE_BR;
+
+  // Pipe 2: 3 tiles tall (rows 10-12)
+  map[10][38] = T.PIPE_TL; map[10][39] = T.PIPE_TR;
+  map[11][38] = T.PIPE_BL; map[11][39] = T.PIPE_BR;
+  map[12][38] = T.PIPE_BL; map[12][39] = T.PIPE_BR;
+
+  // Pipe 3: 4 tiles tall (rows 9-12) - tallest pipe
+  map[9][46] = T.PIPE_TL; map[9][47] = T.PIPE_TR;
+  map[10][46] = T.PIPE_BL; map[10][47] = T.PIPE_BR;
+  map[11][46] = T.PIPE_BL; map[11][47] = T.PIPE_BR;
+  map[12][46] = T.PIPE_BL; map[12][47] = T.PIPE_BR;
+
+  // Pipe 4: 4 tiles tall (rows 9-12)
+  map[9][57] = T.PIPE_TL; map[9][58] = T.PIPE_TR;
+  map[10][57] = T.PIPE_BL; map[10][58] = T.PIPE_BR;
+  map[11][57] = T.PIPE_BL; map[11][58] = T.PIPE_BR;
+  map[12][57] = T.PIPE_BL; map[12][58] = T.PIPE_BR;
+
+  // === Second section ===
+  map[9][77] = T.QUESTION;
+  map[5][78] = T.QUESTION;
+  map[9][78] = T.BRICK;
+
+  map[5][80] = T.BRICK; map[5][81] = T.BRICK; map[5][82] = T.BRICK;
+  map[5][83] = T.QUESTION;
+  map[5][84] = T.BRICK; map[5][85] = T.BRICK; map[5][86] = T.BRICK; map[5][87] = T.BRICK;
+
+  map[9][91] = T.BRICK; map[9][92] = T.BRICK; map[9][93] = T.BRICK;
+  map[9][94] = T.QUESTION;
+  map[5][94] = T.BRICK; map[5][95] = T.BRICK;
+  map[5][96] = T.QUESTION; map[5][97] = T.QUESTION;
+  map[5][98] = T.BRICK;
+
+  map[9][100] = T.QUESTION; map[9][101] = T.QUESTION;
+  map[5][101] = T.BRICK; map[5][102] = T.BRICK; map[5][103] = T.BRICK;
+  map[5][104] = T.BRICK; map[5][105] = T.BRICK; map[5][106] = T.BRICK; map[5][107] = T.BRICK;
+
+  map[9][106] = T.BRICK;
+  map[9][109] = T.BRICK; map[9][110] = T.BRICK;
+  map[9][112] = T.QUESTION;
+
+  map[9][118] = T.BRICK;
+  map[9][121] = T.BRICK; map[9][122] = T.BRICK; map[9][123] = T.BRICK;
+  map[5][128] = T.BRICK; map[5][129] = T.BRICK;
+  map[5][130] = T.QUESTION;
+  map[5][131] = T.BRICK;
+
+  // === STAIRS ===
+  for (let i = 0; i < 4; i++)
+    for (let j = 0; j <= i; j++)
+      map[12-j][134+i] = T.STAIR;
+
+  for (let i = 0; i < 4; i++)
+    for (let j = 0; j <= i; j++)
+      map[12-j][143-i] = T.STAIR;
+
+  for (let i = 0; i < 4; i++)
+    for (let j = 0; j <= i; j++)
+      map[12-j][148+i] = T.STAIR;
+
+  // Pipe before flag
+  map[11][163] = T.PIPE_TL; map[11][164] = T.PIPE_TR;
+  map[12][163] = T.PIPE_BL; map[12][164] = T.PIPE_BR;
+
+  // Final staircase
+  for (let i = 0; i < 8; i++)
+    for (let j = 0; j <= i; j++)
+      map[12-j][181+i] = T.STAIR;
+
+  // Flag
+  for (let y = 3; y <= 12; y++) map[y][198] = T.FLAG_POLE;
+  map[2][198] = T.FLAG_TOP;
+
+  // Castle
+  for (let y = 7; y <= 12; y++)
+    for (let x = 202; x <= 210; x++)
+      map[y][x] = T.CASTLE;
+  for (let y = 4; y <= 6; y++) { map[y][203] = T.CASTLE; map[y][206] = T.CASTLE; map[y][209] = T.CASTLE; }
+  for (let y = 5; y <= 6; y++) { map[y][204] = T.CASTLE; map[y][205] = T.CASTLE; map[y][207] = T.CASTLE; map[y][208] = T.CASTLE; }
+
+  return map;
+}
+
+const blockContents = {};
+function setBlockContent(x, y, content) { blockContents[`${x},${y}`] = content; }
+function initBlockContents() {
+  setBlockContent(16, 9, 'coin');
+  setBlockContent(21, 9, 'mushroom');
+  setBlockContent(23, 9, 'coin');
+  setBlockContent(21, 5, 'coin');
+  setBlockContent(77, 9, 'coin');
+  setBlockContent(78, 5, 'coin');
+  setBlockContent(83, 5, 'coin');
+  setBlockContent(94, 9, 'coin');
+  setBlockContent(96, 5, 'coin');
+  setBlockContent(97, 5, 'coin');
+  setBlockContent(100, 9, 'coin');
+  setBlockContent(101, 9, 'coin');
+  setBlockContent(112, 9, 'coin');
+  setBlockContent(130, 5, 'coin');
+}
+
+function createEnemies() {
+  return [
+    { type: 'goomba', x: 22*TILE, y: 12*TILE, vx: -0.5, alive: true, stomped: false, stompTimer: 0 },
+    { type: 'goomba', x: 40*TILE, y: 12*TILE, vx: -0.5, alive: true, stomped: false, stompTimer: 0 },
+    { type: 'goomba', x: 51*TILE, y: 12*TILE, vx: -0.5, alive: true, stomped: false, stompTimer: 0 },
+    { type: 'goomba', x: 52.5*TILE, y: 12*TILE, vx: -0.5, alive: true, stomped: false, stompTimer: 0 },
+    { type: 'goomba', x: 80*TILE, y: 4*TILE, vx: -0.5, alive: true, stomped: false, stompTimer: 0 },
+    { type: 'goomba', x: 82*TILE, y: 4*TILE, vx: -0.5, alive: true, stomped: false, stompTimer: 0 },
+    { type: 'koopa', x: 107*TILE, y: 11*TILE, vx: -0.5, alive: true, shell: false, shellVx: 0 },
+    { type: 'goomba', x: 97*TILE, y: 12*TILE, vx: -0.5, alive: true, stomped: false, stompTimer: 0 },
+    { type: 'goomba', x: 98.5*TILE, y: 12*TILE, vx: -0.5, alive: true, stomped: false, stompTimer: 0 },
+    { type: 'goomba', x: 114*TILE, y: 12*TILE, vx: -0.5, alive: true, stomped: false, stompTimer: 0 },
+    { type: 'goomba', x: 115.5*TILE, y: 12*TILE, vx: -0.5, alive: true, stomped: false, stompTimer: 0 },
+    { type: 'goomba', x: 124*TILE, y: 12*TILE, vx: -0.5, alive: true, stomped: false, stompTimer: 0 },
+    { type: 'goomba', x: 125.5*TILE, y: 12*TILE, vx: -0.5, alive: true, stomped: false, stompTimer: 0 },
+    { type: 'goomba', x: 174*TILE, y: 12*TILE, vx: -0.5, alive: true, stomped: false, stompTimer: 0 },
+    { type: 'goomba', x: 175.5*TILE, y: 12*TILE, vx: -0.5, alive: true, stomped: false, stompTimer: 0 },
+  ];
+}
+
+const clouds = [
+  {x:8,y:2,size:1},{x:19,y:1,size:1},{x:27,y:2,size:2},{x:36,y:1,size:1},
+  {x:56,y:2,size:2},{x:67,y:1,size:1},{x:75,y:2,size:1},{x:88,y:1,size:2},
+  {x:105,y:2,size:1},{x:120,y:1,size:1},{x:130,y:2,size:2},{x:145,y:1,size:1},
+  {x:160,y:2,size:1},{x:175,y:1,size:2},{x:190,y:2,size:1},
+];
+const hills = [
+  {x:0,size:'big'},{x:16,size:'small'},{x:48,size:'big'},{x:64,size:'small'},
+  {x:96,size:'big'},{x:112,size:'small'},{x:144,size:'big'},{x:160,size:'small'},{x:192,size:'big'},
+];
+const bushes = [
+  {x:11,size:3},{x:23,size:1},{x:41,size:2},{x:59,size:3},{x:71,size:1},{x:89,size:2},
+  {x:107,size:3},{x:119,size:1},{x:137,size:2},{x:155,size:3},{x:167,size:1},{x:185,size:2},
+];
+
+// --- Game State ---
+let gameState = 'title';
+let level = null;
+let camera = { x: 0 };
+let score = 0, coins = 0, lives = 3, time = 400, timeCounter = 0, frameCount = 0;
+let mario = null;
+let enemies = [], items = [], coinAnims = [], brickDebris = [], bumpBlocks = [];
+let flagY = 0, flagDown = false, flagSequence = false, flagTimer = 0, marioAutoWalk = false;
+
+function createMario() {
+  return {
+    x: 3 * TILE,
+    y: 12 * TILE, // feet at row 13 top (ground)
+    vx: 0, vy: 0,
+    width: 14,
+    height: 16,
+    onGround: false,
+    facing: 1,
+    big: false,
+    animTimer: 0, walkFrame: 0,
+    invincible: 0,
+    dead: false, deathTimer: 0, deathVy: 0,
+    shrinking: 0, growing: 0,
+  };
+}
+
+function resetGame() {
+  stopBGM();
+  level = createLevel(); initBlockContents();
+  mario = createMario(); enemies = createEnemies();
+  items = []; coinAnims = []; brickDebris = []; bumpBlocks = [];
+  camera.x = 0; score = 0; coins = 0; lives = 3; time = 400; timeCounter = 0;
+  flagY = 0; flagDown = false; flagSequence = false; flagTimer = 0; marioAutoWalk = false;
+  gameState = 'playing';
+  startBGM();
+}
+function resetLevel() {
+  stopBGM();
+  level = createLevel(); initBlockContents();
+  mario = createMario(); enemies = createEnemies();
+  items = []; coinAnims = []; brickDebris = []; bumpBlocks = [];
+  camera.x = 0; time = 400; timeCounter = 0;
+  flagY = 0; flagDown = false; flagSequence = false; flagTimer = 0; marioAutoWalk = false;
+  gameState = 'playing';
+  startBGM();
+}
+
+// --- Input ---
+const keys = {};
+window.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
+  if (e.code === 'Enter') {
+    ensureAudio();
+    if (gameState === 'title' || gameState === 'gameover' || gameState === 'win') resetGame();
+  }
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+const mobileKeys = { left: false, right: false, a: false, b: false };
+function setupMobileBtn(id, key) {
+  const btn = document.getElementById(id);
+  const setActive = (val) => { mobileKeys[key] = val; btn.classList.toggle('active', val); if (val) ensureAudio(); };
+  btn.addEventListener('touchstart', e => { e.preventDefault(); setActive(true);
+    if (key === 'a' && (gameState==='title'||gameState==='gameover'||gameState==='win')) resetGame();
+  });
+  btn.addEventListener('touchend', e => { e.preventDefault(); setActive(false); });
+  btn.addEventListener('touchcancel', e => { e.preventDefault(); setActive(false); });
+}
+setupMobileBtn('btn-left','left'); setupMobileBtn('btn-right','right');
+setupMobileBtn('btn-a','a'); setupMobileBtn('btn-b','b');
+
+function isLeft() { return keys['ArrowLeft']||keys['KeyA']||mobileKeys.left; }
+function isRight() { return keys['ArrowRight']||keys['KeyD']||mobileKeys.right; }
+function isJump() { return keys['Space']||keys['ArrowUp']||keys['KeyW']||mobileKeys.a; }
+function isRun() { return keys['ShiftLeft']||keys['ShiftRight']||keys['KeyZ']||mobileKeys.b; }
+
+// --- Collision ---
+function getTile(tx, ty) {
+  if (tx < 0 || tx >= LEVEL_W || ty < 0 || ty >= LEVEL_H) return T.EMPTY;
+  return level[ty][tx];
+}
+function isSolid(tile) {
+  return tile===T.GROUND||tile===T.BRICK||tile===T.QUESTION||tile===T.QUESTION_EMPTY||
+         tile===T.PIPE_TL||tile===T.PIPE_TR||tile===T.PIPE_BL||tile===T.PIPE_BR||
+         tile===T.STAIR||tile===T.BRICK_EMPTY||tile===T.INVISIBLE||tile===T.CASTLE;
+}
+function collidesWithLevel(x, y, w, h) {
+  const left = Math.floor(x / TILE);
+  const right = Math.floor((x + w - 1) / TILE);
+  const top = Math.floor(y / TILE);
+  const bottom = Math.floor((y + h - 1) / TILE);
+  for (let ty = top; ty <= bottom; ty++)
+    for (let tx = left; tx <= right; tx++)
+      if (isSolid(getTile(tx, ty))) return true;
+  return false;
+}
+
+// --- Block interaction ---
+function hitBlock(tx, ty) {
+  const tile = getTile(tx, ty);
+  if (tile === T.QUESTION) {
+    const key = `${tx},${ty}`;
+    const content = blockContents[key] || 'coin';
+    level[ty][tx] = T.QUESTION_EMPTY;
+    bumpBlocks.push({ x: tx, y: ty, offsetY: 0, vy: -3 });
+    if (content === 'coin') {
+      sfxCoin(); coins++; score += 200;
+      if (coins >= 100) { coins -= 100; lives++; sfx1up(); }
+      coinAnims.push({ x: tx*TILE+4, y: ty*TILE-16, vy: -4, timer: 30 });
+    } else if (content === 'mushroom') {
+      sfxPowerup();
+      if (!mario.big) {
+        items.push({ type:'mushroom', x:tx*TILE, y:ty*TILE, vx:1, vy:0, emerged:0, emergeFrom:ty*TILE });
+      } else {
+        coins++; score += 200;
+        coinAnims.push({ x:tx*TILE+4, y:ty*TILE-16, vy:-4, timer:30 });
+      }
+    }
+  } else if (tile === T.BRICK) {
+    if (mario.big) {
+      level[ty][tx] = T.EMPTY; sfxBreak(); score += 50;
+      for (let i = 0; i < 4; i++)
+        brickDebris.push({ x:tx*TILE+(i%2)*8, y:ty*TILE+Math.floor(i/2)*8,
+          vx:(i%2===0?-2:2)+Math.random(), vy:-5-Math.random()*3, timer:60 });
+    } else { sfxBump(); bumpBlocks.push({ x:tx, y:ty, offsetY:0, vy:-3 }); }
+  } else { sfxBump(); }
+
+  enemies.forEach(e => {
+    if (!e.alive) return;
+    const ex = Math.floor((e.x+8)/TILE), ey = Math.floor(e.y/TILE)-1;
+    if (ex===tx && ey===ty) { e.alive=false; e.stomped=true; e.stompTimer=1; score+=100; }
+  });
+}
+
+// --- Mario Update ---
+function updateMario() {
+  if (mario.dead) {
+    mario.deathTimer++;
+    if (mario.deathTimer > 20) { mario.deathVy += GRAVITY; mario.y += mario.deathVy; }
+    if (mario.deathTimer > 180) { lives--; if (lives<=0) { stopBGM(); gameState='gameover'; } else resetLevel(); }
+    return;
+  }
+
+  if (mario.growing > 0) {
+    mario.growing--;
+    if (mario.growing === 0) snapMarioToGround();
+    return;
+  }
+  if (mario.shrinking > 0) {
+    mario.shrinking--;
+    if (mario.shrinking === 0) mario.invincible = 120;
+    return;
+  }
+
+  if (flagSequence) { updateFlagSequence(); return; }
+
+  if (marioAutoWalk) {
+    mario.vx = 1.5; mario.x += mario.vx;
+    mario.vy += GRAVITY; if (mario.vy > MAX_FALL) mario.vy = MAX_FALL; mario.y += mario.vy;
+    const mh = mario.big ? 32 : 16;
+    if (collidesWithLevel(mario.x+2, mario.y+mh, mario.width-4, 1)) {
+      mario.y = Math.floor((mario.y+mh)/TILE)*TILE - mh; mario.vy = 0; mario.onGround = true;
+    }
+    if (mario.x > 205*TILE) { stopBGM(); gameState = 'win'; }
+    return;
+  }
+
+  // --- Movement Physics ---
+  const running = isRun();
+  const maxSpeed = running ? 2.5 : 1.5;
+  const accel = mario.onGround ? 0.15 : 0.1;
+  const friction = mario.onGround ? 0.12 : 0.02;
+
+  if (isLeft()) { mario.vx -= accel; mario.facing = -1; }
+  else if (isRight()) { mario.vx += accel; mario.facing = 1; }
+  else {
+    if (mario.vx > 0) mario.vx = Math.max(0, mario.vx - friction);
+    if (mario.vx < 0) mario.vx = Math.min(0, mario.vx + friction);
+  }
+  mario.vx = Math.max(-maxSpeed, Math.min(maxSpeed, mario.vx));
+
+  // Jump: base -7.5, running bonus up to -8.5
+  // With GRAVITY=0.35: max height at -7.5 = ~80px = 5 tiles, at -8.5 = ~103px = 6.4 tiles
+  // This means even the tallest 4-tile pipe (64px) is clearable with a running jump
+  if (isJump() && mario.onGround) {
+    const speed = Math.abs(mario.vx);
+    mario.vy = -7.5 - (speed / 2.5) * 1.0;
+    mario.onGround = false;
+    sfxJump();
+  }
+  // Variable jump - release for short hop
+  if (!isJump() && mario.vy < -3) mario.vy = -3;
+
+  mario.vy += GRAVITY;
+  if (mario.vy > MAX_FALL) mario.vy = MAX_FALL;
+
+  const mw = mario.width;
+  const mh = mario.big ? 32 : 16;
+  const CM = 2; // collision margin
+
+  // Horizontal
+  const newX = mario.x + mario.vx;
+  if (!collidesWithLevel(newX+CM, mario.y+1, mw-CM*2, mh-2)) {
+    mario.x = newX;
+  } else {
+    if (mario.vx > 0) mario.x = Math.floor((newX+CM+mw-CM*2)/TILE)*TILE - mw + CM;
+    else if (mario.vx < 0) mario.x = Math.ceil((newX+CM)/TILE)*TILE - CM;
+    mario.vx = 0;
+  }
+
+  // Vertical
+  const newY = mario.y + mario.vy;
+  if (mario.vy >= 0) {
+    if (collidesWithLevel(mario.x+CM, newY+mh, mw-CM*2, 1)) {
+      mario.y = Math.floor((newY+mh)/TILE)*TILE - mh;
+      mario.vy = 0; mario.onGround = true;
+    } else { mario.y = newY; mario.onGround = false; }
+  } else {
+    if (collidesWithLevel(mario.x+CM, newY, mw-CM*2, 1)) {
+      mario.y = Math.floor(newY/TILE+1)*TILE;
+      mario.vy = 0;
+      const headTX = Math.floor((mario.x+mw/2)/TILE);
+      const headTY = Math.floor(newY/TILE);
+      hitBlock(headTX, headTY);
+    } else { mario.y = newY; }
+  }
+
+  if (mario.x < camera.x) mario.x = camera.x;
+  if (mario.x < 0) mario.x = 0;
+  if (mario.y > LEVEL_H * TILE) killMario();
+  if (mario.invincible > 0) mario.invincible--;
+
+  // Animation
+  if (Math.abs(mario.vx) > 0.3) {
+    mario.animTimer++;
+    if (mario.animTimer > (8 - Math.abs(mario.vx)*2)) { mario.walkFrame = (mario.walkFrame+1)%2; mario.animTimer = 0; }
+  } else { mario.walkFrame = 0; mario.animTimer = 0; }
+
+  // Flagpole
+  const marioTX = Math.floor((mario.x+mw/2)/TILE);
+  const marioTY = Math.floor((mario.y+mh/2)/TILE);
+  if (marioTX === 198 && getTile(198, marioTY) === T.FLAG_POLE) startFlagSequence();
+}
+
+function snapMarioToGround() {
+  const mh = mario.big ? 32 : 16;
+  // Search down for ground
+  for (let dy = 0; dy < 48; dy++) {
+    if (collidesWithLevel(mario.x+2, mario.y+mh+dy, mario.width-4, 1)) {
+      mario.y = Math.floor((mario.y+mh+dy)/TILE)*TILE - mh;
+      mario.vy = 0; mario.onGround = true; return;
+    }
+  }
+  // If embedded in blocks, push up
+  for (let dy = 0; dy < 48; dy++) {
+    if (!collidesWithLevel(mario.x+2, mario.y-dy, mario.width-4, mh)) {
+      mario.y -= dy; return;
+    }
+  }
+}
+
+function killMario() {
+  if (mario.dead || mario.invincible > 0) return;
+  if (mario.big) {
+    const feetY = mario.y + 32; // current feet position
+    mario.big = false; mario.height = 16;
+    mario.y = feetY - 16; // keep feet in same place
+    mario.shrinking = 40; sfxBump(); return;
+  }
+  mario.dead = true; mario.deathTimer = 0; mario.deathVy = -6;
+  mario.vx = 0; mario.vy = 0; sfxDie();
+  stopBGM();
+}
+
+function startFlagSequence() {
+  stopBGM();
+  flagSequence = true; flagTimer = 0; flagDown = true;
+  flagY = mario.y; mario.vx = 0; mario.vy = 0; sfxFlagpole();
+  score += Math.max(0, 12 - Math.floor(mario.y/TILE)) * 100;
+}
+
+function updateFlagSequence() {
+  flagTimer++;
+  const mh = mario.big ? 32 : 16;
+  if (flagDown) {
+    mario.y += 2; flagY += 2;
+    if (mario.y >= 13*TILE - mh) { mario.y = 13*TILE - mh; flagDown = false; mario.facing = 1; }
+  } else if (flagTimer > 60) { marioAutoWalk = true; flagSequence = false; }
+}
+
+// --- Enemies ---
+function updateEnemies() {
+  if (mario.dead || flagSequence || marioAutoWalk) return;
+  enemies.forEach(e => {
+    if (!e.alive) { if (e.stomped && e.stompTimer>0) { e.stompTimer++; if (e.stompTimer>30) e.stomped=false; } return; }
+    if (e.x > camera.x+VIEW_W+32 || e.x < camera.x-32) return;
+
+    if (e.type==='koopa' && e.shell) {
+      e.x += e.shellVx;
+      if (e.shellVx !== 0) enemies.forEach(o => {
+        if (o===e||!o.alive) return;
+        if (Math.abs(o.x-e.x)<14 && Math.abs(o.y-e.y)<14) { o.alive=false; o.stomped=true; o.stompTimer=1; score+=100; }
+      });
+    } else { e.x += e.vx; }
+
+    if (!e.vy) e.vy = 0;
+    e.vy += GRAVITY*0.8; if (e.vy>MAX_FALL) e.vy=MAX_FALL; e.y += e.vy;
+
+    const ew=14, eh=16;
+    if (collidesWithLevel(e.x+1,e.y+eh,ew-2,1)) { e.y = Math.floor((e.y+eh)/TILE)*TILE-eh; e.vy=0; }
+    if (e.y > LEVEL_H*TILE+16) { e.alive=false; return; }
+
+    const moveVx = (e.type==='koopa'&&e.shell) ? e.shellVx : e.vx;
+    if (moveVx!==0) {
+      const checkX = moveVx>0 ? e.x+ew : e.x-1;
+      if (collidesWithLevel(checkX,e.y+2,1,eh-4)) {
+        if (e.type==='koopa'&&e.shell) e.shellVx=-e.shellVx; else e.vx=-e.vx;
+      }
+    }
+
+    if (mario.invincible > 0) return;
+    const mh = mario.big?32:16, mx=mario.x+2, my=mario.y, mw2=mario.width-4;
+
+    if (e.type==='koopa'&&e.shell&&e.shellVx===0) {
+      if (mx+mw2>e.x && mx<e.x+ew && my+mh>e.y+4 && my<e.y+eh) {
+        e.shellVx = (mario.x<e.x)?4:-4; sfxKick(); score+=400;
+      }
+      return;
+    }
+
+    if (mx+mw2>e.x+2 && mx<e.x+ew-2 && my+mh>e.y+4 && my<e.y+eh) {
+      if (mario.vy>0 && my+mh-mario.vy<=e.y+8) {
+        if (e.type==='goomba') { e.alive=false; e.stomped=true; e.stompTimer=1; }
+        else if (e.type==='koopa') { if (!e.shell) { e.shell=true; e.shellVx=0; e.y+=8; } else { e.shellVx=(mario.x<e.x)?4:-4; } }
+        mario.vy = -5; sfxStomp(); score += 100;
+      } else { killMario(); }
+    }
+  });
+}
+
+// --- Items ---
+function updateItems() {
+  items.forEach((item, idx) => {
+    if (item.type==='mushroom') {
+      if (item.emerged < TILE) { item.emerged += 1; item.y = item.emergeFrom - item.emerged; return; }
+
+      item.x += item.vx;
+      item.vy = (item.vy||0) + GRAVITY; if (item.vy>MAX_FALL) item.vy=MAX_FALL; item.y += item.vy;
+
+      if (collidesWithLevel(item.x+2,item.y+16,12,1)) { item.y = Math.floor((item.y+16)/TILE)*TILE-16; item.vy=0; }
+      if (collidesWithLevel(item.vx>0?item.x+14:item.x,item.y+2,2,12)) item.vx=-item.vx;
+      if (item.y > LEVEL_H*TILE) { items.splice(idx,1); return; }
+
+      const mh = mario.big?32:16;
+      if (mario.x+mario.width>item.x && mario.x<item.x+16 &&
+          mario.y+mh>item.y && mario.y<item.y+16 && !mario.dead) {
+        // Keep feet position when growing
+        const feetY = mario.y + mh;
+        mario.big = true; mario.height = 32;
+        mario.y = feetY - 32; // feet stay in place, top extends up
+        mario.growing = 30;
+        sfxPowerup(); score += 1000;
+        items.splice(idx, 1);
+      }
+    }
+  });
+}
+
+function updateParticles() {
+  coinAnims = coinAnims.filter(c => { c.y+=c.vy; c.vy+=0.3; c.timer--; return c.timer>0; });
+  brickDebris = brickDebris.filter(d => { d.x+=d.vx; d.y+=d.vy; d.vy+=GRAVITY; d.timer--; return d.timer>0; });
+  bumpBlocks = bumpBlocks.filter(b => { b.offsetY+=b.vy; b.vy+=0.5; if(b.offsetY>=0){b.offsetY=0;return false;} return true; });
+}
+
+function updateCamera() {
+  const targetX = mario.x - VIEW_W*0.35;
+  if (targetX > camera.x) camera.x = targetX;
+  camera.x = Math.max(0, Math.min(camera.x, LEVEL_W*TILE - VIEW_W));
+}
+
+function updateTime() {
+  if (gameState!=='playing'||mario.dead||flagSequence||marioAutoWalk) return;
+  timeCounter++;
+  if (timeCounter >= 24) { timeCounter=0; time--; if (time<=0) killMario(); }
+}
+
+// --- Drawing ---
+function drawTile(tx, ty, tileType) {
+  const x = tx*TILE - camera.x, y = ty*TILE;
+  if (x < -TILE || x > VIEW_W) return;
+  let bumpOff = 0;
+  bumpBlocks.forEach(b => { if(b.x===tx&&b.y===ty) bumpOff=b.offsetY; });
+
+  switch(tileType) {
+    case T.GROUND:
+      ctx.fillStyle = COLORS.ground1; ctx.fillRect(x,y+bumpOff,TILE,TILE);
+      ctx.fillStyle = COLORS.ground2;
+      if (ty===13) {
+        ctx.fillRect(x,y+bumpOff,TILE,2); ctx.fillRect(x+4,y+2+bumpOff,1,6); ctx.fillRect(x+12,y+2+bumpOff,1,6);
+        ctx.fillRect(x,y+8+bumpOff,TILE,1); ctx.fillRect(x,y+9+bumpOff,1,6); ctx.fillRect(x+8,y+9+bumpOff,1,6);
+      } else {
+        ctx.fillRect(x,y+bumpOff,TILE,1); ctx.fillRect(x,y+bumpOff,1,TILE);
+        ctx.fillStyle='#ac7c00'; ctx.fillRect(x+4,y+3+bumpOff,1,5); ctx.fillRect(x+12,y+3+bumpOff,1,5);
+        ctx.fillRect(x,y+8+bumpOff,TILE,1); ctx.fillRect(x+8,y+10+bumpOff,1,5);
+      }
+      break;
+    case T.BRICK:
+      ctx.fillStyle=COLORS.brick; ctx.fillRect(x,y+bumpOff,TILE,TILE);
+      ctx.fillStyle=COLORS.brickLight; ctx.fillRect(x,y+bumpOff,TILE,1); ctx.fillRect(x,y+bumpOff,1,TILE);
+      ctx.fillStyle='#000'; ctx.fillRect(x+7,y+1+bumpOff,1,7); ctx.fillRect(x,y+7+bumpOff,TILE,1);
+      ctx.fillRect(x+3,y+8+bumpOff,1,8); ctx.fillRect(x+11,y+8+bumpOff,1,8); ctx.fillRect(x,y+15+bumpOff,TILE,1);
+      break;
+    case T.QUESTION: {
+      const qf = Math.floor(frameCount/8)%4;
+      ctx.fillStyle = qf<2 ? COLORS.question : COLORS.questionDark;
+      ctx.fillRect(x,y+bumpOff,TILE,TILE);
+      ctx.fillStyle='#000'; ctx.fillRect(x,y+15+bumpOff,TILE,1); ctx.fillRect(x+15,y+bumpOff,1,TILE);
+      ctx.fillStyle=COLORS.brickLight; ctx.fillRect(x,y+bumpOff,TILE,1); ctx.fillRect(x,y+bumpOff,1,TILE);
+      ctx.fillStyle='#000';
+      ctx.fillRect(x+5,y+3+bumpOff,6,2); ctx.fillRect(x+9,y+5+bumpOff,2,3);
+      ctx.fillRect(x+7,y+7+bumpOff,3,2); ctx.fillRect(x+7,y+10+bumpOff,2,2);
+      break;
+    }
+    case T.QUESTION_EMPTY: case T.BRICK_EMPTY:
+      ctx.fillStyle='#886830'; ctx.fillRect(x,y+bumpOff,TILE,TILE);
+      ctx.fillStyle='#000'; ctx.fillRect(x,y+15+bumpOff,TILE,1); ctx.fillRect(x+15,y+bumpOff,1,TILE);
+      ctx.fillStyle='#ac9468'; ctx.fillRect(x,y+bumpOff,TILE,1); ctx.fillRect(x,y+bumpOff,1,TILE);
+      break;
+    case T.PIPE_TL:
+      ctx.fillStyle=COLORS.pipe; ctx.fillRect(x-2,y,TILE+2,TILE);
+      ctx.fillStyle=COLORS.pipeHighlight; ctx.fillRect(x-2,y+2,4,TILE-2);
+      ctx.fillStyle=COLORS.pipeDark; ctx.fillRect(x+14,y+2,2,TILE-2);
+      ctx.fillStyle='#000'; ctx.fillRect(x-2,y,TILE+2,2);
+      break;
+    case T.PIPE_TR:
+      ctx.fillStyle=COLORS.pipe; ctx.fillRect(x,y,TILE+2,TILE);
+      ctx.fillStyle=COLORS.pipeHighlight; ctx.fillRect(x+2,y+2,2,TILE-2);
+      ctx.fillStyle=COLORS.pipeDark; ctx.fillRect(x+14,y+2,4,TILE-2);
+      ctx.fillStyle='#000'; ctx.fillRect(x,y,TILE+2,2);
+      break;
+    case T.PIPE_BL:
+      ctx.fillStyle=COLORS.pipe; ctx.fillRect(x,y,TILE,TILE);
+      ctx.fillStyle=COLORS.pipeHighlight; ctx.fillRect(x+2,y,2,TILE);
+      ctx.fillStyle=COLORS.pipeDark; ctx.fillRect(x+14,y,2,TILE);
+      break;
+    case T.PIPE_BR:
+      ctx.fillStyle=COLORS.pipe; ctx.fillRect(x,y,TILE,TILE);
+      ctx.fillStyle=COLORS.pipeHighlight; ctx.fillRect(x+2,y,2,TILE);
+      ctx.fillStyle=COLORS.pipeDark; ctx.fillRect(x+14,y,2,TILE);
+      break;
+    case T.STAIR:
+      ctx.fillStyle='#c88c5c'; ctx.fillRect(x,y,TILE,TILE);
+      ctx.fillStyle='#e0a870'; ctx.fillRect(x,y,TILE,1); ctx.fillRect(x,y,1,TILE);
+      ctx.fillStyle='#906830'; ctx.fillRect(x+15,y,1,TILE); ctx.fillRect(x,y+15,TILE,1);
+      break;
+    case T.FLAG_POLE:
+      ctx.fillStyle='#080'; ctx.fillRect(x+7,y,2,TILE); break;
+    case T.FLAG_TOP:
+      ctx.fillStyle='#080'; ctx.fillRect(x+7,y,2,TILE);
+      ctx.fillStyle='#0a0'; ctx.fillRect(x+5,y,6,6); break;
+    case T.CASTLE:
+      ctx.fillStyle=COLORS.castle; ctx.fillRect(x,y,TILE,TILE);
+      ctx.fillStyle=COLORS.castleDark;
+      ctx.fillRect(x+7,y+1,1,7); ctx.fillRect(x,y+7,TILE,1);
+      ctx.fillRect(x+3,y+8,1,8); ctx.fillRect(x+11,y+8,1,8);
+      break;
+  }
+}
+
+function drawCloud(cx,cy,size) {
+  const x=cx*TILE-camera.x*0.5, y=cy*TILE;
+  if (x<-48||x>VIEW_W+16) return;
+  ctx.fillStyle=COLORS.cloud;
+  const w=size===2?48:32;
+  ctx.fillRect(x+8,y,w-16,4); ctx.fillRect(x+4,y+4,w-8,4);
+  ctx.fillRect(x,y+8,w,8); ctx.fillRect(x+4,y+16,w-8,4);
+  ctx.fillStyle=COLORS.cloudShadow; ctx.fillRect(x+4,y+16,w-8,2);
+}
+
+function drawHill(hx,size) {
+  const x=hx*TILE-camera.x, y=13*TILE;
+  if (x<-80||x>VIEW_W+16) return;
+  const h=size==='big'?4:2, w=size==='big'?5:3;
+  ctx.fillStyle=COLORS.hillGreen;
+  for (let r=0;r<h;r++) ctx.fillRect(x+r*TILE,y-(r+1)*TILE,((w-r)*2-1)*TILE,TILE);
+  ctx.fillStyle=COLORS.hillLight;
+  const cx2=x+(w-1)*TILE+4;
+  for (let r=0;r<h;r++) ctx.fillRect(cx2,y-(r+1)*TILE,4,TILE);
+}
+
+function drawBush(bx,size) {
+  const x=bx*TILE-camera.x, y=12*TILE;
+  if (x<-48||x>VIEW_W+16) return;
+  ctx.fillStyle=COLORS.bushGreen;
+  const w=size*TILE;
+  ctx.fillRect(x,y,w,TILE); ctx.fillRect(x+4,y-4,w-8,4);
+  ctx.fillStyle=COLORS.bushLight; ctx.fillRect(x+4,y,4,TILE); ctx.fillRect(x+8,y-4,4,4);
+}
+
+function drawBigMarioSprite(offX, offY, data, palette) {
+  for (let y=0; y<data.length; y++)
+    for (let x=0; x<data[y].length; x++) {
+      const c = data[y][x];
+      if (c!==0 && palette[c]) { ctx.fillStyle=palette[c]; ctx.fillRect(offX+x,offY+y*2,1,2); }
+    }
+}
+
+function drawMario() {
+  if (mario.dead) { drawPixelBlock(mario.x-camera.x, mario.y, MARIO_DEAD, MARIO_PALETTE, 1); return; }
+  if (mario.invincible>0 && Math.floor(frameCount/2)%2) return;
+  if (mario.growing>0 && Math.floor(mario.growing/3)%2) return;
+  if (mario.shrinking>0 && Math.floor(mario.shrinking/3)%2) return;
+
+  const x = mario.x - camera.x, y = mario.y;
+
+  if (mario.big) {
+    let sprite;
+    if (!mario.onGround) sprite = MARIO_BIG_JUMP;
+    else if (Math.abs(mario.vx)>0.3) sprite = mario.walkFrame===0 ? MARIO_BIG_STAND : MARIO_BIG_WALK1;
+    else sprite = MARIO_BIG_STAND;
+
+    if (mario.facing===-1) {
+      ctx.save(); ctx.scale(-1,1);
+      drawBigMarioSprite(-(x+16), y, sprite, MARIO_PALETTE);
+      ctx.restore();
+    } else {
+      drawBigMarioSprite(x, y, sprite, MARIO_PALETTE);
+    }
+  } else {
+    let sprite;
+    if (!mario.onGround) sprite = MARIO_JUMP;
+    else if (Math.abs(mario.vx)>0.3) sprite = mario.walkFrame===0 ? MARIO_WALK1 : MARIO_WALK2;
+    else sprite = MARIO_STAND;
+
+    if (mario.facing===-1) {
+      ctx.save(); ctx.scale(-1,1);
+      drawPixelBlock(-(x+12), y, sprite, MARIO_PALETTE, 1);
+      ctx.restore();
+    } else { drawPixelBlock(x, y, sprite, MARIO_PALETTE, 1); }
+  }
+}
+
+function drawEnemies() {
+  enemies.forEach(e => {
+    const x=e.x-camera.x;
+    if (x<-16||x>VIEW_W+16) return;
+    if (e.type==='goomba') {
+      if (e.stomped&&e.stompTimer>0) drawPixelBlock(x,e.y,GOOMBA_FLAT,GOOMBA_PALETTE,1);
+      else if (e.alive) drawPixelBlock(x,e.y,Math.floor(frameCount/8)%2===0?GOOMBA_SPRITE:GOOMBA_WALK2,GOOMBA_PALETTE,1);
+    } else if (e.type==='koopa') {
+      if (e.shell) drawPixelBlock(x,e.y,KOOPA_SHELL,KOOPA_PALETTE,1);
+      else if (e.alive) drawPixelBlock(x,e.y,KOOPA_SPRITE1,KOOPA_PALETTE,1);
+    }
+  });
+}
+
+function drawItems() {
+  items.forEach(item => {
+    const x=item.x-camera.x;
+    if (x<-16||x>VIEW_W+16) return;
+    if (item.type==='mushroom') drawPixelBlock(x,item.y,MUSHROOM_SPRITE,MUSHROOM_PALETTE,1);
+  });
+}
+
+function drawCoinAnims() { coinAnims.forEach(c => drawPixelBlock(c.x-camera.x,c.y,COIN_SPRITE,COIN_PALETTE,1)); }
+function drawBrickDebris() {
+  brickDebris.forEach(d => {
+    const x=d.x-camera.x;
+    ctx.fillStyle=COLORS.brick; ctx.fillRect(x,d.y,6,6);
+    ctx.fillStyle=COLORS.brickLight; ctx.fillRect(x,d.y,6,1); ctx.fillRect(x,d.y,1,6);
+  });
+}
+
+function drawFlag() {
+  const x=198*TILE-camera.x;
+  if (x<-16||x>VIEW_W+16) return;
+  let fy = flagDown ? Math.min(flagY,12*TILE) : 3*TILE;
+  ctx.fillStyle=COLORS.flag; ctx.fillRect(x-8,fy,10,10);
+  ctx.fillStyle='#080'; ctx.fillRect(x+7,2*TILE,2,11*TILE);
+}
+
+function drawHUD() {
+  ctx.fillStyle=COLORS.text; ctx.font='8px monospace';
+  ctx.fillText('MARIO',24,16); ctx.fillText(String(score).padStart(6,'0'),24,24);
+  ctx.fillStyle=COLORS.coin; ctx.fillRect(96,18,6,6);
+  ctx.fillStyle=COLORS.text;
+  ctx.fillText('x'+String(coins).padStart(2,'0'),104,24);
+  ctx.fillText('WORLD',145,16); ctx.fillText(' 1-1',145,24);
+  ctx.fillText('TIME',200,16); ctx.fillText(' '+String(Math.max(0,time)).padStart(3,'0'),200,24);
+}
+
+function drawLevel() {
+  ctx.fillStyle=COLORS.sky; ctx.fillRect(0,0,VIEW_W,VIEW_H);
+  hills.forEach(h=>drawHill(h.x,h.size));
+  clouds.forEach(c=>drawCloud(c.x,c.y,c.size));
+  bushes.forEach(b=>drawBush(b.x,b.size));
+  const startTX=Math.floor(camera.x/TILE), endTX=Math.ceil((camera.x+VIEW_W)/TILE)+1;
+  for (let ty=0;ty<LEVEL_H;ty++)
+    for (let tx=startTX;tx<=endTX&&tx<LEVEL_W;tx++) {
+      const tile=getTile(tx,ty);
+      if (tile!==T.EMPTY) drawTile(tx,ty,tile);
+    }
+  drawFlag(); drawItems(); drawCoinAnims(); drawBrickDebris(); drawEnemies(); drawMario(); drawHUD();
+}
+
+function drawTitleScreen() {
+  ctx.fillStyle=COLORS.sky; ctx.fillRect(0,0,VIEW_W,VIEW_H);
+  ctx.fillStyle=COLORS.question; ctx.font='bold 16px monospace'; ctx.fillText('SUPER MARIO BROS.',40,60);
+  ctx.font='8px monospace'; ctx.fillStyle=COLORS.text;
+  ctx.fillText('WORLD 1-1 TRIBUTE',72,80);
+  ctx.fillText('(C) PERSONAL USE ONLY',56,110);
+  if (Math.floor(frameCount/20)%2) { ctx.fillStyle=COLORS.coin; ctx.fillText('PRESS ENTER TO START',56,150); }
+  drawPixelBlock(120,170,MARIO_STAND,MARIO_PALETTE,1);
+  ctx.fillStyle='#aaa';
+  ctx.fillText('ARROWS: MOVE  SPACE: JUMP',40,210);
+  ctx.fillText('SHIFT: RUN    ENTER: START',40,222);
+}
+
+function drawGameOverScreen() {
+  ctx.fillStyle='#000'; ctx.fillRect(0,0,VIEW_W,VIEW_H);
+  ctx.fillStyle=COLORS.text; ctx.font='bold 12px monospace'; ctx.fillText('GAME OVER',88,100);
+  ctx.font='8px monospace'; ctx.fillText('SCORE: '+String(score).padStart(6,'0'),80,130);
+  if (Math.floor(frameCount/20)%2) { ctx.fillStyle=COLORS.coin; ctx.fillText('PRESS ENTER',88,170); }
+}
+
+function drawWinScreen() {
+  drawLevel();
+  ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(0,0,VIEW_W,VIEW_H);
+  ctx.fillStyle=COLORS.coin; ctx.font='bold 14px monospace'; ctx.fillText('COURSE CLEAR!',64,80);
+  ctx.font='8px monospace'; ctx.fillStyle=COLORS.text;
+  ctx.fillText('SCORE: '+String(score).padStart(6,'0'),80,110);
+  ctx.fillText('COINS: '+String(coins).padStart(2,'0'),88,125);
+  if (Math.floor(frameCount/20)%2) { ctx.fillStyle=COLORS.coin; ctx.fillText('PRESS ENTER',88,170); }
+}
+
+// --- Main Loop ---
+function update() {
+  frameCount++;
+  if (gameState==='playing') { updateMario(); updateEnemies(); updateItems(); updateParticles(); updateCamera(); updateTime(); }
+}
+function draw() {
+  ctx.save(); ctx.scale(SCALE,SCALE);
+  switch(gameState) {
+    case 'title': drawTitleScreen(); break;
+    case 'playing': case 'dead': drawLevel(); break;
+    case 'gameover': drawGameOverScreen(); break;
+    case 'win': drawWinScreen(); break;
+  }
+  ctx.restore();
+}
+function gameLoop() { update(); draw(); requestAnimationFrame(gameLoop); }
+
+function resizeCanvas() {
+  const maxW=window.innerWidth*0.95, maxH=window.innerHeight*0.85;
+  const s=Math.max(1,Math.floor(Math.min(maxW/VIEW_W,maxH/VIEW_H)));
+  canvas.style.width=VIEW_W*s+'px'; canvas.style.height=VIEW_H*s+'px';
+}
+window.addEventListener('resize',resizeCanvas);
+resizeCanvas();
+
+gameState = 'title';
+gameLoop();
+</script>
+</body>
+</html>
