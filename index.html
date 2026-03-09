@@ -226,6 +226,62 @@ function sfxPowerdown(){[784,587,440,330].forEach((f,i)=>setTimeout(()=>snd(f,.1
 function sfxFire(){snd(900,.04);setTimeout(()=>snd(600,.06),30);setTimeout(()=>snd(400,.04),60)}
 function sfxFireHit(){snd(300,.05);setTimeout(()=>snd(500,.08),30);setTimeout(()=>snd(200,.06),60)}
 
+// Victory fanfare - original triumphant melody
+function playVictoryMusic(){
+  ensureAudio();if(!ax)return;
+  // Triumphant fanfare: uplifting, celebratory chiptune
+  const t=ax.currentTime;
+  const sixteenth=60/200/4; // 200 BPM
+  // Melody (square wave)
+  const mel=[
+    [523,2],[659,2],[784,2],[1047,4],[784,2],[1047,6], // C E G C' G C'
+    [988,2],[1047,2],[1175,2],[1319,4],[1175,2],[1319,6], // B C' D' E' D' E'
+    [1047,2],[1175,2],[1319,2],[1568,8], // C' D' E' G'
+    [1319,4],[1175,2],[1047,4],[1319,2],[1568,12], // E' D' C' E' G' (hold)
+  ];
+  // Bass (triangle wave) 
+  const bass=[
+    [131,8],[165,8], // C3, E3
+    [196,8],[220,8], // G3, A3
+    [262,8],[196,8], // C4, G3
+    [262,16],[131,8], // C4, C3
+  ];
+  // Play melody
+  let mTime=0;
+  mel.forEach(([freq,dur])=>{
+    const d=dur*sixteenth;
+    if(freq>0)bgmNote(freq,d*.9,'square',.07,t+mTime);
+    mTime+=d;
+  });
+  // Play bass
+  let bTime=0;
+  bass.forEach(([freq,dur])=>{
+    const d=dur*sixteenth;
+    if(freq>0)bgmNote(freq,d*.85,'triangle',.06,t+bTime);
+    bTime+=d;
+  });
+  // Harmony arpeggios
+  const harm=[
+    [262,2],[330,2],[392,2],[330,2],[262,2],[330,2],[392,2],[330,2],
+    [294,2],[392,2],[494,2],[392,2],[294,2],[392,2],[494,2],[392,2],
+    [262,2],[330,2],[392,2],[523,2],[392,2],[330,2],[262,2],[330,2],
+    [262,2],[392,2],[523,2],[659,2],[523,2],[659,2],[784,2],[523,4],
+  ];
+  let hTime=0;
+  harm.forEach(([freq,dur])=>{
+    const d=dur*sixteenth;
+    if(freq>0)bgmNote(freq,d*.7,'triangle',.025,t+hTime);
+    hTime+=d;
+  });
+  // Drum fills
+  for(let i=0;i<16;i++){
+    bgmDrum('K',t+i*sixteenth*4);
+    bgmDrum('H',t+i*sixteenth*4+sixteenth*2);
+  }
+  // Final cymbal crash
+  bgmDrum('S',t+mTime-.1);bgmDrum('S',t+mTime);
+}
+
 // --- BGM ---
 let bgmOn=false,bgmN=[],bgmT=null,bgmB=0;
 const BPM=160,BT=60/BPM;
@@ -371,16 +427,29 @@ const bushes=[{x:11,s:3},{x:23,s:1},{x:41,s:2},{x:59,s:3},{x:71,s:1},{x:89,s:2},
 let gs='title',level,cam={x:0},score=0,coins=0,lives=3,time=400,tc=0,fc=0;
 let mario,enemies=[],items=[],coinAn=[],debris=[],bumps=[],fireballs=[];
 let flagY=0,flagDn=false,flagSeq=false,flagTm=0,autoWalk=false;
+let flagSlideY=3*16; // flag position (starts at top)
+let flagScore=0; // score earned from flagpole height
+// Win celebration state
+let winTimer=0,winPhase=0,winBonusTime=0,winBonusScore=0;
+let fireworks=[];
+let winMusicPlayed=false;
+let flagScorePopup={active:false,x:0,y:0,val:0,timer:0};
 
 function createMario(){return{x:3*16,y:12*16,vx:0,vy:0,w:14,h:16,ground:false,face:1,big:false,
   at:0,wf:0,inv:0,dead:false,dt:0,dv:0,shrink:0,grow:0,fireTimer:0};}
 
 function resetGame(){stopBGM();level=createLevel();initBC();mario=createMario();enemies=createEnemies();
-  items=[];coinAn=[];debris=[];bumps=[];fireballs=[];cam.x=0;score=0;coins=0;lives=3;time=400;tc=0;
-  flagY=0;flagDn=false;flagSeq=false;flagTm=0;autoWalk=false;gs='playing';startBGM();}
+  items=[];coinAn=[];debris=[];bumps=[];fireballs=[];fireworks=[];cam.x=0;score=0;coins=0;lives=3;time=400;tc=0;
+  flagY=0;flagDn=false;flagSeq=false;flagTm=0;autoWalk=false;flagSlideY=3*16;flagScore=0;
+  winTimer=0;winPhase=0;winBonusTime=0;winBonusScore=0;winMusicPlayed=false;
+  flagScorePopup={active:false,x:0,y:0,val:0,timer:0};
+  gs='playing';startBGM();}
 function resetLevel(){stopBGM();level=createLevel();initBC();mario=createMario();enemies=createEnemies();
-  items=[];coinAn=[];debris=[];bumps=[];fireballs=[];cam.x=0;time=400;tc=0;
-  flagY=0;flagDn=false;flagSeq=false;flagTm=0;autoWalk=false;gs='playing';startBGM();}
+  items=[];coinAn=[];debris=[];bumps=[];fireballs=[];fireworks=[];cam.x=0;time=400;tc=0;
+  flagY=0;flagDn=false;flagSeq=false;flagTm=0;autoWalk=false;flagSlideY=3*16;flagScore=0;
+  winTimer=0;winPhase=0;winBonusTime=0;winBonusScore=0;winMusicPlayed=false;
+  flagScorePopup={active:false,x:0,y:0,val:0,timer:0};
+  gs='playing';startBGM();}
 
 // --- Input ---
 const keys={};
@@ -490,7 +559,7 @@ function updateMario(){
   if(autoWalk){mario.vx=1.5;mario.x+=mario.vx;mario.vy+=GRAVITY;if(mario.vy>MAX_FALL)mario.vy=MAX_FALL;
     mario.y+=mario.vy;const mh=mario.big?32:16;
     if(collide(mario.x+2,mario.y+mh,mario.w-4,1)){mario.y=Math.floor((mario.y+mh)/16)*16-mh;mario.vy=0;mario.ground=true;}
-    if(mario.x>205*16){stopBGM();gs='win';}return;}
+    if(mario.x>205*16){stopBGM();gs='win';winTimer=0;winPhase=0;winBonusTime=time;winBonusScore=0;winMusicPlayed=false;fireworks=[];}return;}
 
   // Fire button (press, not hold)
   const fireNow=iF();
@@ -546,11 +615,32 @@ function killMario(){
   }
   mario.dead=true;mario.dt=0;mario.dv=-6;mario.vx=0;mario.vy=0;sfxDie();stopBGM();}
 
-function startFlag(){stopBGM();flagSeq=true;flagTm=0;flagDn=true;flagY=mario.y;mario.vx=0;mario.vy=0;sfxFlag();
-  score+=Math.max(0,12-Math.floor(mario.y/16))*100;}
+function startFlag(){
+  stopBGM();flagSeq=true;flagTm=0;flagDn=true;
+  mario.vx=0;mario.vy=0;sfxFlag();
+  // Height-based scoring (original SMB tiers)
+  // Flagpole spans rows 3-12 (top to bottom)
+  // Row 3-4: 5000, Row 5-6: 2000, Row 7-8: 800, Row 9-10: 400, Row 11-12: 100
+  const mh=mario.big?32:16;
+  const touchRow=Math.floor(mario.y/16);
+  if(touchRow<=4)flagScore=5000;
+  else if(touchRow<=6)flagScore=2000;
+  else if(touchRow<=8)flagScore=800;
+  else if(touchRow<=10)flagScore=400;
+  else flagScore=100;
+  score+=flagScore;
+  // Show score popup near flagpole
+  flagScorePopup={active:true,x:198*16,y:mario.y,val:flagScore,timer:0};
+}
 function updateFlag(){flagTm++;const mh=mario.big?32:16;
-  if(flagDn){mario.y+=2;flagY+=2;if(mario.y>=13*16-mh){mario.y=13*16-mh;flagDn=false;mario.face=1;}}
-  else if(flagTm>60){autoWalk=true;flagSeq=false;}}
+  // Slide flag down the pole
+  if(flagSlideY<12*16)flagSlideY+=2;
+  // Mario slides down
+  if(flagDn){mario.y+=2;if(mario.y>=13*16-mh){mario.y=13*16-mh;flagDn=false;mario.face=1;}}
+  else if(flagTm>60){autoWalk=true;flagSeq=false;}
+  // Score popup float up
+  if(flagScorePopup.active){flagScorePopup.timer++;flagScorePopup.y-=0.5;if(flagScorePopup.timer>90)flagScorePopup.active=false;}
+}
 
 // --- Enemies ---
 function updateEnemies(){
@@ -678,7 +768,39 @@ function drawItems(){items.forEach(it=>{const x=it.x-cam.x;if(x<-16||x>VIEW_W+16
 function drawCoins(){coinAn.forEach(c=>drawPx(c.x-cam.x,c.y,COIN_S,COIN_P));}
 function drawDebris(){debris.forEach(d=>{const x=d.x-cam.x;ctx.fillStyle=C.brick;ctx.fillRect(x,d.y,6,6);ctx.fillStyle=C.brickLight;ctx.fillRect(x,d.y,6,1);ctx.fillRect(x,d.y,1,6);});}
 function drawFlagP(){const x=198*16-cam.x;if(x<-16||x>VIEW_W+16)return;
-  let fy=flagDn?Math.min(flagY,12*16):3*16;ctx.fillStyle=C.flag;ctx.fillRect(x-8,fy,10,10);ctx.fillStyle='#080';ctx.fillRect(x+7,2*16,2,11*16);}
+  // Pole
+  ctx.fillStyle='#aaa';ctx.fillRect(x+7,2*16,2,11*16);
+  // Ball on top
+  ctx.fillStyle='#0a0';ctx.fillRect(x+5,2*16-2,6,4);
+  // Triangular white flag (slides down)
+  const fy=flagSlideY;
+  ctx.fillStyle='#fcfcfc';
+  // Draw triangle: point at pole, extends left
+  ctx.beginPath();
+  ctx.moveTo(x+6,fy+1);     // top-right (at pole)
+  ctx.lineTo(x-8,fy+6);     // left point
+  ctx.lineTo(x+6,fy+11);    // bottom-right (at pole)
+  ctx.closePath();
+  ctx.fill();
+  // Flag outline/shadow
+  ctx.fillStyle='#d0d0d0';
+  ctx.beginPath();
+  ctx.moveTo(x+6,fy+9);
+  ctx.lineTo(x-6,fy+6);
+  ctx.lineTo(x+6,fy+11);
+  ctx.closePath();
+  ctx.fill();
+  // Score popup
+  if(flagScorePopup.active){
+    const px=flagScorePopup.x-cam.x;
+    const py=flagScorePopup.y;
+    const alpha=Math.min(1,Math.max(0,1-flagScorePopup.timer/90));
+    ctx.globalAlpha=alpha;
+    ctx.fillStyle=C.text;ctx.font='8px monospace';
+    ctx.fillText(String(flagScorePopup.val),px-16,py);
+    ctx.globalAlpha=1;
+  }
+}
 function drawHUD(){ctx.fillStyle=C.text;ctx.font='8px monospace';
   ctx.fillText('MARIO',24,16);ctx.fillText(String(score).padStart(6,'0'),24,24);
   ctx.fillStyle=C.coin;ctx.fillRect(96,18,6,6);ctx.fillStyle=C.text;
@@ -701,10 +823,142 @@ function drawTitle(){ctx.fillStyle=C.sky;ctx.fillRect(0,0,VIEW_W,VIEW_H);
 function drawGO(){ctx.fillStyle='#000';ctx.fillRect(0,0,VIEW_W,VIEW_H);ctx.fillStyle=C.text;ctx.font='bold 12px monospace';
   ctx.fillText('GAME OVER',88,100);ctx.font='8px monospace';ctx.fillText('SCORE: '+String(score).padStart(6,'0'),80,130);
   if(Math.floor(fc/20)%2){ctx.fillStyle=C.coin;ctx.fillText('PRESS ENTER',88,170);}}
-function drawWin(){drawLevel();ctx.fillStyle='rgba(0,0,0,.5)';ctx.fillRect(0,0,VIEW_W,VIEW_H);
-  ctx.fillStyle=C.coin;ctx.font='bold 14px monospace';ctx.fillText('COURSE CLEAR!',64,80);
-  ctx.font='8px monospace';ctx.fillStyle=C.text;ctx.fillText('SCORE: '+String(score).padStart(6,'0'),80,110);ctx.fillText('COINS: '+String(coins).padStart(2,'0'),88,125);
-  if(Math.floor(fc/20)%2){ctx.fillStyle=C.coin;ctx.fillText('PRESS ENTER',88,170);}}
+function drawWin(){
+  drawLevel();
+  winTimer++;
+
+  // Phase 0: Time bonus countdown (~2-3 seconds)
+  if(winPhase===0){
+    // Count down fast: subtract multiple per frame
+    if(winBonusTime>0){
+      const sub=Math.max(1,Math.ceil(winBonusTime/60)); // adaptive speed: faster when more time left
+      const actual=Math.min(sub,winBonusTime);
+      winBonusTime-=actual;winBonusScore+=actual*50;score+=actual*50;
+      if(winTimer%3===0)snd(800,.03,'square',.06);
+    }
+    if(winBonusTime<=0){winPhase=1;winTimer=0;}
+  }
+  // Phase 1: Pause then start music+fireworks (frame ~30)
+  if(winPhase===1){
+    if(!winMusicPlayed&&winTimer>20){playVictoryMusic();winMusicPlayed=true;}
+    if(winTimer>30){winPhase=2;winTimer=0;}
+  }
+  // Phase 2: Fireworks show + text reveal
+  if(winPhase===2){
+    // Launch fireworks periodically
+    if(winTimer%25===1&&fireworks.length<20){
+      spawnFirework();
+      // Firework launch sound
+      snd(200+Math.random()*200,.1,'sine',.04);
+    }
+  }
+
+  // Update & draw fireworks
+  updateFireworks();
+  drawFireworks();
+
+  // Overlay
+  const alpha=Math.min(winTimer*0.008,0.45);
+  if(winPhase>=2)ctx.fillStyle=`rgba(0,0,0,${alpha})`;
+  else ctx.fillStyle='rgba(0,0,0,0.1)';
+  ctx.fillRect(0,0,VIEW_W,VIEW_H);
+
+  // Time bonus display
+  if(winPhase===0||winPhase===1){
+    ctx.fillStyle=C.text;ctx.font='8px monospace';
+    ctx.fillText('FLAGPOLE:  '+String(flagScore),72,82);
+    ctx.fillText('TIME x 50',80,96);
+    ctx.fillStyle=C.coin;
+    ctx.fillText(String(winBonusScore).padStart(6,'0'),88,110);
+  }
+
+  // COURSE CLEAR text (phase 2+)
+  if(winPhase>=2){
+    const textY=winTimer<30?80-(30-winTimer)*2:80;
+    const textAlpha=Math.min(winTimer/20,1);
+
+    // Glowing text effect
+    const glow=Math.sin(fc*.08)*.3+.7;
+    ctx.fillStyle=`rgba(252,152,56,${textAlpha*glow})`;
+    ctx.font='bold 16px monospace';
+    // Shadow
+    ctx.fillText('COURSE CLEAR!',57,textY+1);
+    ctx.fillStyle=`rgba(252,252,252,${textAlpha})`;
+    ctx.fillText('COURSE CLEAR!',56,textY);
+
+    if(winTimer>30){
+      const fadeIn=Math.min((winTimer-30)/20,1);
+      ctx.globalAlpha=fadeIn;
+      ctx.fillStyle=C.text;ctx.font='8px monospace';
+      ctx.fillText('FLAGPOLE:  '+String(flagScore),72,textY+28);
+      ctx.fillText('TIME BONUS: '+String(winBonusScore),64,textY+42);
+      ctx.fillText('COINS: '+String(coins).padStart(2,'0'),84,textY+56);
+      ctx.fillText('SCORE: '+String(score).padStart(6,'0'),76,textY+72);
+      ctx.globalAlpha=1;
+    }
+
+    if(winTimer>100&&Math.floor(fc/20)%2){
+      ctx.fillStyle=C.coin;ctx.font='8px monospace';
+      ctx.fillText('PRESS ENTER',88,textY+85);
+    }
+  }
+}
+
+// Fireworks particle system
+function spawnFirework(){
+  const fx=40+Math.random()*(VIEW_W-80);
+  const fy=30+Math.random()*80;
+  const colors=['#fc3030','#fcfc30','#30fc30','#3090fc','#fc30fc','#fcfcfc','#fc9838','#30fcfc'];
+  const color1=colors[Math.floor(Math.random()*colors.length)];
+  const color2=colors[Math.floor(Math.random()*colors.length)];
+  const particles=[];
+  const count=20+Math.floor(Math.random()*20);
+  for(let i=0;i<count;i++){
+    const angle=Math.PI*2*i/count+Math.random()*.3;
+    const speed=1+Math.random()*2;
+    particles.push({
+      x:fx,y:fy,
+      vx:Math.cos(angle)*speed,
+      vy:Math.sin(angle)*speed,
+      color:Math.random()>.5?color1:color2,
+      life:40+Math.floor(Math.random()*30),
+      maxLife:40+Math.floor(Math.random()*30),
+      size:1+Math.floor(Math.random()*2)
+    });
+  }
+  // Burst sound
+  setTimeout(()=>{snd(600+Math.random()*600,.08,'sine',.04);snd(400+Math.random()*400,.12,'triangle',.03);},0);
+  fireworks.push({particles,timer:0});
+}
+
+function updateFireworks(){
+  fireworks=fireworks.filter(fw=>{
+    fw.timer++;
+    fw.particles=fw.particles.filter(p=>{
+      p.x+=p.vx;p.y+=p.vy;
+      p.vy+=0.04; // slight gravity
+      p.vx*=0.98; // air resistance
+      p.vy*=0.98;
+      p.life--;
+      return p.life>0;
+    });
+    return fw.particles.length>0;
+  });
+}
+
+function drawFireworks(){
+  fireworks.forEach(fw=>{
+    fw.particles.forEach(p=>{
+      const alpha=Math.min(p.life/p.maxLife*2,1);
+      ctx.globalAlpha=alpha;
+      ctx.fillStyle=p.color;
+      // Sparkle effect: alternate size
+      const s=p.size+(Math.floor(fc/2+p.life)%2);
+      ctx.fillRect(Math.floor(p.x),Math.floor(p.y),s,s);
+    });
+  });
+  ctx.globalAlpha=1;
+}
 
 function update(){fc++;if(gs==='playing'){updateMario();updateEnemies();updateItems();updateFireballs();updateParts();updateCam();updateTime();}}
 function draw(){ctx.save();ctx.scale(SCALE,SCALE);
